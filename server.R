@@ -1,38 +1,54 @@
 
 function(input,output) {
-  #crime number geographically
   year_selected <- reactive({
     df %>%
-      filter(.,DATA_YEAR>=input$from & DATA_YEAR<=input$to)
+      filter(.,DATA_YEAR==input$year)
   })
-  
+  #crime number geographically
   geo <- reactive({
-    df %>%
-      filter(.,DATA_YEAR>=input$from & DATA_YEAR<=input$to) %>%
-      # select(.,STATE,VICTIM_COUNT,BIAS_MOTIVATION==input$type)%>%
+    year_selected() %>%
       group_by(.,STATE)%>%
-      summarise(.,VICTIM_tot = sum(VICTIM_COUNT))
+      summarise(.,crime = n())
   })
-  
-  output$map <- renderGvis({gvisGeoChart(geo(), 'STATE', "VICTIM_tot",
-                   options=list(region="US", displayMode="regions", 
+
+  output$map <- renderGvis({gvisGeoChart(geo(), 'STATE', "crime",
+                   options=list(region="US", displayMode="regions",
                                 resolution="provinces",
                                 width='auto', height='auto',
-                                titleTextStyle="{color:'red', fontName:'Courier', fontSize:16}"))
+                                title='Hate Crime Across US',
+                                colors="['#DAEFFE', '#1396F9', '#0462A8']"
+                                ))
   })
-  
-  #Offender bar
-  output$off<-renderPlot({
-      year_selected() %>%
-      group_by(.,get(input$off))%>%
-      summarise(.,VICTIM_tot = sum(VICTIM_COUNT,na.rm = T))%>%
-      # gvisColumnChart(.,xvar =OFFENDER_RACE,yvar=VICTIM_tot)
-      ggplot(.,aes(x = get(input$off),y=VICTIM_tot))+ geom_col(get(input$off))
-  })
-  
- 
 
-  # #Victim bar Graph
+  # Offender Info
+  off_ <-reactive({
+    year_selected() %>%
+      mutate(new=get(input$off))%>%
+      group_by(.,new)%>%
+      summarise(.,VICTIM_tot = n())%>%
+      filter(new != "" & new!= "Unknown")
+  })
+  
+  # Offender bar
+  output$off_bar<-renderPlot({
+    off_()%>%
+      ggplot(.,aes(x = new,y=VICTIM_tot,fill=new)) +
+      geom_col(width = 1, stat = "identity", color = "white")+
+      ggtitle("Bar Plot of Offener Info")+
+      xlab("Offener Info") + ylab("Crime Number") 
+  })
+  
+  # Offender pie
+  output$off_pie<-renderPlot({
+    off_()%>%
+      ggplot(.,aes(x = "new",y=VICTIM_tot,fill=new)) +
+      geom_bar(width = 1, stat = "identity", color = "white") +
+      coord_polar("y", start=0)+theme_void()+
+      ggtitle("Pie Plot of Offener Info")+
+      xlab("Offener Info") + ylab("Crime Number") 
+  })
+
+  #Victim bar Graph
   victim <- reactive({
     year_selected() %>%
       mutate(new = str_split(get(input$type), ";")) %>%
@@ -41,28 +57,58 @@ function(input,output) {
       summarise(.,VICTIM_tot = sum(VICTIM_COUNT,na.rm = T))%>%
       arrange(.,desc(VICTIM_tot))
     })
-      
+
    output$victim <- renderPlot({
      victim()%>%
        top_n(10)%>%
-       ggplot(.,aes(x = new,y=VICTIM_tot)) + 
-       geom_col(aes(fill=new),position="dodge")
-   })   
-      
+       ggplot(.,aes(x = new,y=VICTIM_tot)) +
+       geom_col(aes(fill=new),position="dodge")+
+       ggtitle("Plot of Crime Info")+
+       xlab("Crime Info") + ylab("Crime Number")+
+       theme(text = element_text(size=15),
+             axis.text.x = element_text(angle=45, hjust=1))
+
+   })
+
 
   #Victim Table
   output$table <- DT::renderDataTable({
-    datatable(victim(),rownames = F) %>% 
+    datatable(victim(),rownames = F) %>%
       formatStyle(input$selected,background = 'skyblue',
                   fontWeight ='bold')
   })
+
+ # Time Series
+
+  output$trend_tot <- renderPlot({
+    df%>%
+      group_by(.,DATA_YEAR)%>%
+      summarise(.,crime = n())%>%
+      ggplot(.,aes(x = DATA_YEAR,y=crime)) +
+      geom_point(aes(colour =crime))+
+      geom_line(linetype="solid", color="red")+
+      ylab("Crime Number")
+
+  })
   
-  #Time Series
-  trend <- reactive({
-  year_selected() %>% mutate(DATA_YEAR = as.factor(DATA_YEAR)) %>%
-    group_by(DATA_YEAR)%>%
-    summarise(.,sum(VICTIM_COUNT,na.rm=T))})
+  output$trend_bias <- renderPlot({
+    df %>%
+      group_by(.,DATA_YEAR,BIAS_MOTIVATION)%>%
+      summarise(.,crime=n())%>%
+      ggplot(.,aes(x = DATA_YEAR,y=crime,color=BIAS_MOTIVATION))+geom_point()+
+      facet_wrap(~BIAS_MOTIVATION)+
+      geom_line() +ylab("Crime Number")
+  })
+ 
+  output$trend_vic <- renderPlot({
+    df %>%
+      mutate(VICTIM_TYPES = str_split(VICTIM_TYPES, ";")) %>%
+      unnest(VICTIM_TYPES)%>%
+      group_by(.,DATA_YEAR,VICTIM_TYPES)%>%
+      summarise(.,crime=n())%>%
+      ggplot(.,aes(x = DATA_YEAR,y=crime,color=VICTIM_TYPES))+geom_point()+
+      facet_wrap(~VICTIM_TYPES)+
+      geom_line() +ylab("Crime Number")
+  })
 
-
-  output$trend <- renderGvis({trend()%>%gvisLineChart()})
 }
